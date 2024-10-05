@@ -81,6 +81,7 @@ func (l *limiter) refillTokens() {
 		default:
 			// Reservoir full, stop ticking.
 			ticker.Stop()
+			return
 		}
 	}
 }
