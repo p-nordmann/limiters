@@ -2,13 +2,11 @@ package reservoir
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/p-nordmann/limiters"
 )
-
-// TODO find a way to be garbage collected
-//	right now, there is an infinite loop in a goroutine
 
 type token struct{}
 
@@ -18,6 +16,8 @@ type limiter struct {
 	refillDuration time.Duration
 	in             chan token
 	out            chan token
+	numConcurrent  int
+	mutex          sync.Mutex
 }
 
 // Creates a new reservoir limiter.
@@ -28,16 +28,29 @@ func NewLimiter(maxTokens int, refillDuration time.Duration) limiters.Limiter {
 		in:             make(chan token),
 		out:            make(chan token),
 	}
-	go l.manageTokens()
 	return l
 }
 
 // Blocks until a token is available or the context is canceled.
 func (l *limiter) Limit(ctx context.Context) error {
+	l.mutex.Lock()
+	if l.numConcurrent == 0 {
+		l.numConcurrent = 2
+		go l.manageTokens()
+	} else {
+		l.numConcurrent++
+	}
+	l.mutex.Unlock()
 	select {
 	case <-l.out:
+		l.mutex.Lock()
+		l.numConcurrent--
+		l.mutex.Unlock()
 		return nil
 	case <-ctx.Done():
+		l.mutex.Lock()
+		l.numConcurrent--
+		l.mutex.Unlock()
 		return ctx.Err()
 	}
 }
@@ -46,27 +59,29 @@ func (l *limiter) Limit(ctx context.Context) error {
 func (l *limiter) manageTokens() {
 	tokenCount := l.maxTokens
 	for {
-		// Reservoir empty.
-		if tokenCount == 0 {
+		switch tokenCount {
+		case 0:
 			<-l.in
 			tokenCount++
-			continue
-		}
-
-		// Reservoir full.
-		if tokenCount == l.maxTokens {
+		case l.maxTokens:
+			l.mutex.Lock()
+			if l.numConcurrent == 1 {
+				// No one is waiting: free resources.
+				l.numConcurrent = 0
+				l.mutex.Unlock()
+				return
+			}
+			l.mutex.Unlock()
 			l.out <- token{}
 			tokenCount--
 			go l.refillTokens()
-			continue
-		}
-
-		// In between.
-		select {
-		case <-l.in:
-			tokenCount++
-		case l.out <- token{}:
-			tokenCount--
+		default:
+			select {
+			case <-l.in:
+				tokenCount++
+			case l.out <- token{}:
+				tokenCount--
+			}
 		}
 	}
 }
