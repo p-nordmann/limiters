@@ -1,2 +1,2 @@
-# rate-limiter
-Simple rate limiter implementation in Go.
+# limiters
+Simple rate limiter implementations in Go.
