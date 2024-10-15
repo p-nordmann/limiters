@@ -1,17 +1,15 @@
-package reservoir
+package limiters
 
 import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/p-nordmann/limiters"
 )
 
 type token struct{}
 
 // Struct implementing the Limiter interface.
-type limiter struct {
+type reservoirLimiter struct {
 	maxTokens      int
 	refillDuration time.Duration
 	in             chan token
@@ -21,18 +19,17 @@ type limiter struct {
 }
 
 // Creates a new reservoir limiter.
-func NewLimiter(maxTokens int, refillDuration time.Duration) limiters.Limiter {
-	l := &limiter{
+func NewReservoirLimiter(maxTokens int, refillDuration time.Duration) Limiter {
+	return &reservoirLimiter{
 		maxTokens:      maxTokens,
 		refillDuration: refillDuration,
 		in:             make(chan token),
 		out:            make(chan token),
 	}
-	return l
 }
 
 // Blocks until a token is available or the context is canceled.
-func (l *limiter) Limit(ctx context.Context) error {
+func (l *reservoirLimiter) Limit(ctx context.Context) error {
 	l.mutex.Lock()
 	if l.numConcurrent == 0 {
 		l.numConcurrent = 2
@@ -56,7 +53,7 @@ func (l *limiter) Limit(ctx context.Context) error {
 }
 
 // Manages the tokens in the reservoir (distribution and refill).
-func (l *limiter) manageTokens() {
+func (l *reservoirLimiter) manageTokens() {
 	tokenCount := l.maxTokens
 	for {
 		switch tokenCount {
@@ -87,7 +84,7 @@ func (l *limiter) manageTokens() {
 }
 
 // Starts a ticker to refill missing tokens.
-func (l *limiter) refillTokens() {
+func (l *reservoirLimiter) refillTokens() {
 	ticker := time.NewTicker(l.refillDuration)
 	for range ticker.C {
 		select {

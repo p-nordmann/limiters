@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/p-nordmann/limiters/reservoir"
+	"github.com/p-nordmann/limiters"
 )
 
 func main() {
-	limiter := reservoir.NewLimiter(4, time.Second)
+	limiter := limiters.NewReservoirLimiter(4, time.Second)
 	ctx := context.Background()
 
 	for i := 0; i < 6; i++ {
@@ -33,5 +33,5 @@ func main() {
 		}(i)
 	}
 
-	time.Sleep(15 * time.Second) // Wait to observe the output
+	time.Sleep(5 * time.Second) // Wait to observe the output
 }

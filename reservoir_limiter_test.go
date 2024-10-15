@@ -1,3 +1,3 @@
-package reservoir_test
+package limiters_test
 
 // TODO implement tests
