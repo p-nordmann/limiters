@@ -14,8 +14,12 @@ type reservoirLimiter struct {
 	refillDuration time.Duration
 	in             chan token
 	out            chan token
-	numConcurrent  int
-	mutex          sync.Mutex
+
+	numListeners     int
+	numListenersLock sync.Mutex
+
+	numManagers     int
+	numManagersLock sync.Mutex
 }
 
 // Creates a new reservoir limiter.
@@ -28,28 +32,53 @@ func NewReservoirLimiter(maxTokens int, refillDuration time.Duration) Limiter {
 	}
 }
 
+func (l *reservoirLimiter) incrementNumListeners() {
+	l.numListenersLock.Lock()
+	l.numListeners++
+	l.numListenersLock.Unlock()
+}
+
+func (l *reservoirLimiter) decrementNumListeners() {
+	l.numListenersLock.Lock()
+	l.numListeners--
+	l.numListenersLock.Unlock()
+}
+
+func (l *reservoirLimiter) readNumListeners() int {
+	l.numListenersLock.Lock()
+	defer l.numListenersLock.Unlock()
+	return l.numListeners
+}
+
 // Blocks until a token is available or the context is canceled.
 func (l *reservoirLimiter) Limit(ctx context.Context) error {
-	l.mutex.Lock()
-	if l.numConcurrent == 0 {
-		l.numConcurrent = 2
-		go l.manageTokens()
-	} else {
-		l.numConcurrent++
-	}
-	l.mutex.Unlock()
+	l.incrementNumListeners()
+	defer l.decrementNumListeners()
+
+	l.launchManager()
+
 	select {
 	case <-l.out:
-		l.mutex.Lock()
-		l.numConcurrent--
-		l.mutex.Unlock()
 		return nil
 	case <-ctx.Done():
-		l.mutex.Lock()
-		l.numConcurrent--
-		l.mutex.Unlock()
 		return ctx.Err()
 	}
+}
+
+func (l *reservoirLimiter) launchManager() {
+	l.numManagersLock.Lock()
+	defer l.numManagersLock.Unlock()
+
+	if l.numManagers < 0 {
+		panic("numManagers is expected to be positive or null")
+	}
+
+	if l.numManagers > 0 {
+		return
+	}
+
+	go l.manageTokens()
+	l.numManagers = 1
 }
 
 // Manages the tokens in the reservoir (distribution and refill).
@@ -61,14 +90,13 @@ func (l *reservoirLimiter) manageTokens() {
 			<-l.in
 			tokenCount++
 		case l.maxTokens:
-			l.mutex.Lock()
-			if l.numConcurrent == 1 {
-				// No one is waiting: free resources.
-				l.numConcurrent = 0
-				l.mutex.Unlock()
+			// If no one is waiting, free resources.
+			if l.readNumListeners() == 0 {
+				l.numManagersLock.Lock()
+				l.numManagers--
+				l.numManagersLock.Unlock()
 				return
 			}
-			l.mutex.Unlock()
 			l.out <- token{}
 			tokenCount--
 			go l.refillTokens()

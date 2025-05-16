@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	limiter := limiters.NewReservoirLimiter(4, time.Second)
+	limiter := limiters.NewNaiveLimiter(4, time.Second)
 	ctx := context.Background()
 
 	for i := 0; i < 6; i++ {
